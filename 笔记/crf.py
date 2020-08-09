@@ -10,7 +10,7 @@ def argmax(vec):
     # 第1维度上最大值的下标
     # input: tensor([[2,3,4]])
     # output: 2
-    _, idx = torch.max(vec,1)
+    _, idx = torch.max(vec, 1)
     return idx.item()
 
 def prepare_sequence(seq,to_ix):
@@ -26,6 +26,18 @@ def log_sum_exp(vec):
     max_score = vec[0, argmax(vec)]
     max_score_broadcast = max_score.view(1,-1).expand(1,vec.size()[1])
     return max_score+torch.log(torch.sum(torch.exp(vec-max_score_broadcast)))
+
+def log_sum_exp2(vec):
+    # max_score = float("-inf")
+    # for i in range(vec.size()[0]):
+    #     max_score = max(max_score, torch.max(vec[i]).item())
+    # max_score = torch.tensor(max_score)
+    # max_score_broadcast = max_score.view(1,-1).expand(vec.size())
+
+    max_score = torch.tensor(-1.6)
+    max_score_broadcast = max_score.view(1,-1).expand(1,vec.size()[1])
+    return max_score+torch.log(torch.sum(torch.exp(vec-max_score_broadcast), 1))
+
 
 START_TAG = "<s>"
 END_TAG = "<e>"
@@ -72,18 +84,13 @@ class BiLSTM_CRF(nn.Module):
         forward_var = init_alphas  # 初始化各个label的得分
 
         for feat in feats:  # 对每一步
-            alphas_t = []
-            for next_tag in range(self.tagset_size):  # 对每一维
-                # 取其中的某个tag对应的值进行扩张至（1，tagset_size）大小
-                # 如tensor([3]) -> tensor([[3,3,3,3,3]])???
-                emit_score = feat[next_tag].view(1,-1).expand(1,self.tagset_size)
-                trans_score = self.transitions[next_tag].view(1, -1)  # 一维升二维
-                # 上一步的路径和+转移分数+发射分数
-                next_tag_var = forward_var + trans_score + emit_score
-                # log_sum_exp求和
-                alphas_t.append(log_sum_exp(next_tag_var).view(1))
-            # 增维
-            forward_var += torch.cat(alphas_t).view(1,-1)
+
+            emit_score = feat.view(-1, 1).expand(5,self.tagset_size)
+            new = forward_var + self.transitions + emit_score
+            new = log_sum_exp2(new)
+
+            forward_var += new.view(1,-1)
+
         terminal_var = forward_var+self.transitions[self.tag2ix[END_TAG]]
         alpha = log_sum_exp(terminal_var)
         #归一项的值
@@ -139,7 +146,7 @@ class BiLSTM_CRF(nn.Module):
             best_path.append(best_tag_id)
         # Pop off the start tag (we dont want to return that to the caller)
         start = best_path.pop()
-        assert start == self.tag2ix[START_TAG]  # Sanity check
+        # assert start == self.tag2ix[START_TAG]  # Sanity check
         best_path.reverse()
         return path_score, best_path
 

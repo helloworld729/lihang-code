@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
+# 可以结合MOMO笔记来看，对前向的理解不够深，可以改造的
 torch.manual_seed(1)
 
 # some helper functions
@@ -53,16 +53,16 @@ class BiLSTM_CRF(nn.Module):
         # these two statements enforce the constraint that we never transfer to the start tag
         # and we never transfer from the stop tag
         # 不会转移到起点，终点也不会再次转移？？？
-        self.transitions.data[tag2ix[START_TAG], :] = -10000
+        self.transitions.data[tag2ix[START_TAG], :] = -10000  # 表示转移到此状态
         self.transitions.data[:, tag2ix[END_TAG]] = -10000
 
-        self.hidden = self.init_hidden()
+        self.hidden = self.init_hidden()  # hidden 初始化
 
     def init_hidden(self):
         return (torch.randn(2, 1,self.hidden_dim//2),
                 torch.randn(2, 1,self.hidden_dim//2))
 
-    def _forward_alg(self, feats):  # 归一化
+    def _forward_alg(self, feats):  # 总分，归一化项，分母
         # to compute partition function
         # 求归一化项的值，应用动态归化算法
         init_alphas = torch.full((1,self.tagset_size), -10000.)# tensor([[-10000.,-10000.,-10000.,-10000.,-10000.]])
@@ -71,21 +71,22 @@ class BiLSTM_CRF(nn.Module):
 
         forward_var = init_alphas
 
-        for feat in feats:  # 对每一步
+        for feat in feats:  # 每一帧数据，实际对应的是5个发射分数
             #feat指Bi-LSTM模型每一步的输出(抽取的特征)，大小为tagset_size
             alphas_t = []
-            for next_tag in range(self.tagset_size):  # 对每一维
-                # 取其中的某个tag对应的值进行扩张至（1，tagset_size）大小
+            # 针对每一维计算发射、转移分数
+            for next_tag in range(self.tagset_size):
                 # 如tensor([3]) -> tensor([[3,3,3,3,3]])
+                # 1*5 发射分数
                 emit_score = feat[next_tag].view(1, -1).expand(1, self.tagset_size)
-                # 增维操作
-                trans_score = self.transitions[next_tag].view(1, -1)
+                # 1*5 转移概率
+                trans_score = self.transitions[next_tag].view(1, -1)  # 转移到此状态
                 # 上一步的路径和+转移分数+发射分数  # 对应Sij那个公式
                 next_tag_var = forward_var + trans_score + emit_score
                 # log_sum_exp求和
-                alphas_t.append(log_sum_exp(next_tag_var).view(1))  # 每一个维度的分数
-            # 增维
-            # 此时alpha_t有5个分数
+                alphas_t.append(log_sum_exp(next_tag_var).view(1))  # 对应previous中的第i项
+
+            # 此时alpha_t有5个分数，分别表示转移到某状态的得分
             forward_var = torch.cat(alphas_t).view(1, -1)  # 将列表转化为tensor
         terminal_var = forward_var+self.transitions[self.tag2ix[END_TAG]]
         alpha = log_sum_exp(terminal_var)
@@ -93,6 +94,7 @@ class BiLSTM_CRF(nn.Module):
         return alpha
 
     def _get_lstm_features(self,sentence):
+        # 特征抽取
         self.hidden = self.init_hidden()
         embeds = self.word_embeds(sentence).view(len(sentence),1,-1)
         lstm_out, self.hidden = self.lstm(embeds, self.hidden)
@@ -148,13 +150,14 @@ class BiLSTM_CRF(nn.Module):
 
     def neg_log_likelihood(self, sentence, tags):
         # 由lstm层计算得的每一时刻属于某一tag的值
-        # 例如句子长度为11，标签类数为5，则返回11*5的矩阵
+        # 例如句子长度为11，标签类数为5，则返回11*5的矩阵，表示11步，每步对用的发射分数
         feats = self._get_lstm_features(sentence)  # 句子长度，标签类数
         # 归一项的值
         forward_score = self._forward_alg(feats)
         # 正确路径的值
         gold_score = self._score_sentence(feats, tags)
-        return forward_score - gold_score# -(正确路径的分值  -  归一项的值）
+        # 正确路径的分值 - 归一项的值，希望两者最后的分差为0
+        return forward_score - gold_score
 
     def forward(self, sentence):  # dont confuse this with _forward_alg above.
         # Get the emission scores from the BiLSTM
@@ -166,52 +169,66 @@ class BiLSTM_CRF(nn.Module):
 
 
 #　主函数
-# if __name__ == "__main__":
-EMBEDDING_DIM = 5
-HIDDEN_DIM = 4
-# Make up some training data
-training_data = [(
-    "the wall street journal reported today that apple corporation made money".split(),
-    "B I I I O O O B I O O".split()
-), (
-    "georgia tech is a university in georgia".split(),
-    "B I O O O O B".split()
-)]
-word2ix = {}
-for sentence, tags in training_data:
-    for word in sentence:
-        if word not in word2ix:
-            word2ix[word] = len(word2ix)
-tag2ix = {"B": 0, "I": 1, "O": 2, START_TAG: 3, END_TAG: 4}
-model = BiLSTM_CRF(len(word2ix), tag2ix, EMBEDDING_DIM, HIDDEN_DIM)
-optimizer = optim.SGD(model.parameters(), lr=0.01, weight_decay=1e-4)
-# Check predictions before training
-# 输出训练前的预测序列
-with torch.no_grad():
-    precheck_sent = prepare_sequence(training_data[0][0], word2ix)
-    precheck_tags = torch.tensor([tag2ix[t] for t in training_data[0][1]], dtype=torch.long)
-    print(model(precheck_sent))
-# Make sure prepare_sequence from earlier in the LSTM section is loaded
-for epoch in range(30):  # again, normally you would NOT do 300 epochs, it is toy data
-    for sentence, tags in training_data:
-        # Step 1. Remember that Pytorch accumulates gradients.
-        # We need to clear them out before each instance
-        model.zero_grad()
-        # Step 2. Get our inputs ready for the network, that is,
-        # turn them into Tensors of word indices.
-        sentence_in = prepare_sequence(sentence, word2ix)
-        targets = torch.tensor([tag2ix[t] for t in tags], dtype=torch.long)
-        # Step 3. Run our forward pass.
-        loss = model.neg_log_likelihood(sentence_in, targets)
-        # Step 4. Compute the loss, gradients, and update the parameters by
-        # calling optimizer.step()
-        loss.backward()
-        optimizer.step()
-# Check predictions after training
-with torch.no_grad():
-    precheck_sent = prepare_sequence(training_data[0][0], word2ix)
-    print(model(precheck_sent))
+if __name__ == "__main__":
+    EMBEDDING_DIM = 5
+    HIDDEN_DIM = 4
+    # Make up some training data
+    # 11 + 7
+    training_data = [(
+        "the wall street journal reported today that apple corporation made money".split(),
+        "B I I I O O O B I O O".split()
+    ), (
+        "georgia tech is a university in georgia".split(),
+        "B I O O O O B".split()
+    )]
+    word2ix = {}  # 单词:id
+    for sentence, tags in training_data:  #　句子　标记
+        for word in sentence:
+            if word not in word2ix:
+                # 妙啊，逐个的添加到字典中，index会渐渐加一
+                word2ix[word] = len(word2ix)
+
+    # tag:id
+    tag2ix = {"B": 0, "I": 1, "O": 2, START_TAG: 3, END_TAG: 4}
+    id2tag = {ix:tag for (tag, ix) in tag2ix.items()}
+    model = BiLSTM_CRF(len(word2ix), tag2ix, EMBEDDING_DIM, HIDDEN_DIM)
+    optimizer = optim.SGD(model.parameters(), lr=0.01, weight_decay=1e-4)
+    # Check predictions before training
+    # 输出训练前的预测序列
+    print("label", training_data[0][1])
+    with torch.no_grad():
+        precheck_sent = prepare_sequence(training_data[0][0], word2ix)
+        precheck_tags = torch.tensor([tag2ix[t] for t in training_data[0][1]], dtype=torch.long)
+        score, tags = model(precheck_sent)
+        tags = [id2tag[ix] for ix in tags]
+        print(score, tags)
+    # Make sure prepare_sequence from earlier in the LSTM section is loaded
+    for epoch in range(300):  # again, normally you would NOT do 300 epochs, it is toy data
+        for sentence, tags in training_data:
+            # Step 1. Remember that Pytorch accumulates gradients.
+            # We need to clear them out before each instance
+            model.zero_grad()
+            # Step 2. Get our inputs ready for the network, that is,
+            # turn them into Tensors of word indices.
+            # 构建单词序列、标记序列
+            sentence_in = prepare_sequence(sentence, word2ix)
+            targets = torch.tensor([tag2ix[t] for t in tags], dtype=torch.long)
+
+            # Step 3. Run our forward pass.
+            loss = model.neg_log_likelihood(sentence_in, targets)
+            # Step 4. Compute the loss, gradients, and update the parameters by
+            # calling optimizer.step()
+            loss.backward()
+            optimizer.step()
+    # Check predictions after training
+    with torch.no_grad():
+        precheck_sent = prepare_sequence(training_data[0][0], word2ix)
+        score, tags = model(precheck_sent)
+        tags = [id2tag[ix] for ix in tags]
+        print(score, tags)
+
 # 输出结果
-# (tensor(-9996.9365), [1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2])
-# (tensor(-9973.2725), [0, 1, 1, 1, 2, 2, 2, 0, 1, 2, 2])
+# label           ['B', 'I', 'I', 'I', 'O', 'O', 'O', 'B', 'I', 'O', 'O']
+# tensor(2.6907)  ['I', 'O', 'O', 'O', 'O', 'O', 'O', 'O', 'O', 'O', 'I']
+# tensor(20.4906) ['B', 'I', 'I', 'I', 'O', 'O', 'O', 'B', 'I', 'O', 'O']
 

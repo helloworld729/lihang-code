@@ -25,21 +25,14 @@ class MyPerceptron:
 
 
 def draw(X, w, b):
-    # 生产分离超平面上的两点
-    X_new = np.array([[0], [6]])
-#     原视频错误处理更新
-    y_predict_false = -(b + w[0] * X_new) / w[1]
-    print(y_predict_false)
-    y_predict = w.T @ (X_new)+b
-    print(y_predict)
+    X_new = np.array([0, 6])
+    y_predict = -(b + w[0] * X_new) / w[1]
     # 绘制训练数据集的散点图
     plt.plot(X[:2, 0], X[:2, 1], "g*", label="1")
 #     原视频错误处理更新
     plt.plot(X[2:, 0], X[2:, 1], "rx", label="-1")
     # 绘制分离超平面
     plt.plot(X_new, y_predict, "b-")
-    # 设置两坐标轴起止值
-    plt.axis([0, 6, 0, 6])
     # 设置坐标轴标签
     plt.xlabel('x1')
     plt.ylabel('x2')
