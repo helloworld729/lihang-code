@@ -4,15 +4,15 @@ import numpy as np
 
 class AdaBoost:
     def __init__(self,X,y,tol=0.05,max_iter=10):
-        self.X=X   # 训练数据 实例
-        self.y=y   # 训练数据 标签
-        self.tol=tol # 训练中止条件 right_rate>self.tol
-        self.max_iter=max_iter # 最大迭代次数
-        self.w=np.full((X.shape[0]),1/X.shape[0]) #初始化样本权重w
-        self.alpha=[]  # 弱分类器权重
-        self.G=[] # 弱分类器
-        self.min_v=min(X)-0.5 #分类阈值下届
-        self.max_v=max(X)+0.5 #分类阈值上届
+        self.X = X   # 训练数据 实例
+        self.y = y   # 训练数据 标签
+        self.tol = tol  # 训练中止条件 right_rate>self.tol
+        self.max_iter = max_iter  # 最大迭代次数
+        self.w = np.full((X.shape[0]),1/X.shape[0])  # 初始化样本权重w
+        self.alpha = []  # 弱分类器权重
+        self.G = []  # 弱分类器
+        self.min_v = min(X)-0.5  # 分类阈值下届
+        self.max_v = max(X)+0.5  # 分类阈值上届
 
     def _class(self):
         """以带权重的分类误差最小为目标，选择最佳分类阈值"""
